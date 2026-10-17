@@ -1,5 +1,2 @@
-pydantic
 fastapi
-uvicorn
 mangum
-dotenv

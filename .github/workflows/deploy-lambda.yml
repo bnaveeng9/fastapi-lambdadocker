@@ -124,71 +124,71 @@ jobs:
           push: true
           tags: ${{ steps.ecr.outputs.uri }}:${{ github.sha }}
 
-      # - name: Deploy image to Lambda
-      #   shell: bash
-      #   run: |
-      #     set -euo pipefail
-      #     aws lambda update-function-code \
-      #       --function-name "$LAMBDA_FUNCTION_NAME" \
-      #       --image-uri "${{ steps.ecr.outputs.uri }}:${{ github.sha }}" \
-      #       --region "$AWS_REGION"
-      #     aws lambda wait function-updated-v2 \
-      #       --function-name "$LAMBDA_FUNCTION_NAME" \
-      #       --region "$AWS_REGION"
+      - name: Deploy image to Lambda
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws lambda update-function-code \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --image-uri "${{ steps.ecr.outputs.uri }}:${{ github.sha }}" \
+            --region "$AWS_REGION"
+          aws lambda wait function-updated-v2 \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION"
 
-      # - name: Load Parameter Store values into Lambda environment
-      #   shell: bash
-      #   run: |
-      #     set -euo pipefail
-      #     umask 077
-      #     parameter_file="$RUNNER_TEMP/ssm-parameters.json"
-      #     current_config_file="$RUNNER_TEMP/lambda-configuration.json"
-      #     current_variables_file="$RUNNER_TEMP/lambda-variables.json"
-      #     parameter_variables_file="$RUNNER_TEMP/parameter-variables.json"
-      #     environment_file="$RUNNER_TEMP/lambda-environment.json"
-      #     parameter_prefix="${SSM_PARAMETER_PATH%/}/"
+      - name: Load Parameter Store values into Lambda environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          parameter_file="$RUNNER_TEMP/ssm-parameters.json"
+          current_config_file="$RUNNER_TEMP/lambda-configuration.json"
+          current_variables_file="$RUNNER_TEMP/lambda-variables.json"
+          parameter_variables_file="$RUNNER_TEMP/parameter-variables.json"
+          environment_file="$RUNNER_TEMP/lambda-environment.json"
+          parameter_prefix="${SSM_PARAMETER_PATH%/}/"
 
-      #     aws ssm get-parameters-by-path \
-      #       --path "$SSM_PARAMETER_PATH" \
-      #       --recursive \
-      #       --with-decryption \
-      #       --region "$AWS_REGION" \
-      #       --output json > "$parameter_file"
+          aws ssm get-parameters-by-path \
+            --path "$SSM_PARAMETER_PATH" \
+            --recursive \
+            --with-decryption \
+            --region "$AWS_REGION" \
+            --output json > "$parameter_file"
 
-      #     parameter_count="$(jq -er '.Parameters | length' "$parameter_file")"
-      #     if [[ "$parameter_count" -eq 0 ]]; then
-      #       echo "::error::No SSM parameters found under ${SSM_PARAMETER_PATH}."
-      #       exit 1
-      #     fi
+          parameter_count="$(jq -er '.Parameters | length' "$parameter_file")"
+          if [[ "$parameter_count" -eq 0 ]]; then
+            echo "::error::No SSM parameters found under ${SSM_PARAMETER_PATH}."
+            exit 1
+          fi
 
-      #     jq --arg prefix "$parameter_prefix" '
-      #       reduce .Parameters[] as $parameter ({};
-      #         ($parameter.Name | ltrimstr($prefix) | gsub("/"; "_")) as $key |
-      #         if ($key | test("^[A-Za-z][A-Za-z0-9_]+$")) then
-      #           if has($key) then
-      #             error("Multiple SSM parameters map to the same Lambda environment variable")
-      #           else
-      #             . + {($key): $parameter.Value}
-      #           end
-      #         else
-      #           error("An SSM parameter path does not map to a valid Lambda environment variable name")
-      #         end
-      #       )
-      #     ' "$parameter_file" > "$parameter_variables_file"
+          jq --arg prefix "$parameter_prefix" '
+            reduce .Parameters[] as $parameter ({};
+              ($parameter.Name | ltrimstr($prefix) | gsub("/"; "_")) as $key |
+              if ($key | test("^[A-Za-z][A-Za-z0-9_]+$")) then
+                if has($key) then
+                  error("Multiple SSM parameters map to the same Lambda environment variable")
+                else
+                  . + {($key): $parameter.Value}
+                end
+              else
+                error("An SSM parameter path does not map to a valid Lambda environment variable name")
+              end
+            )
+          ' "$parameter_file" > "$parameter_variables_file"
 
-      #     aws lambda get-function-configuration \
-      #       --function-name "$LAMBDA_FUNCTION_NAME" \
-      #       --region "$AWS_REGION" \
-      #       --output json > "$current_config_file"
-      #     jq '.Environment.Variables // {}' "$current_config_file" > "$current_variables_file"
-      #     jq -s '.[0] * .[1] | {Variables: .}' \
-      #       "$current_variables_file" \
-      #       "$parameter_variables_file" > "$environment_file"
+          aws lambda get-function-configuration \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --output json > "$current_config_file"
+          jq '.Environment.Variables // {}' "$current_config_file" > "$current_variables_file"
+          jq -s '.[0] * .[1] | {Variables: .}' \
+            "$current_variables_file" \
+            "$parameter_variables_file" > "$environment_file"
 
-      #     aws lambda update-function-configuration \
-      #       --function-name "$LAMBDA_FUNCTION_NAME" \
-      #       --environment "file://$environment_file" \
-      #       --region "$AWS_REGION" >/dev/null
-      #     aws lambda wait function-updated-v2 \
-      #       --function-name "$LAMBDA_FUNCTION_NAME" \
-      #       --region "$AWS_REGION"
+          aws lambda update-function-configuration \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --environment "file://$environment_file" \
+            --region "$AWS_REGION" >/dev/null
+          aws lambda wait function-updated-v2 \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION"
