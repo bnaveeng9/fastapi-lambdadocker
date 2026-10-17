@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: "us-east-1"
-      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECR_REPOSITORY: apigateway/fastapilambda
       LAMBDA_FUNCTION_NAME: ${{ vars.LAMBDA_FUNCTION_NAME }}
       SSM_PARAMETER_PATH: /sst/passphrase/fastapi-lambdadocker/
     steps:
