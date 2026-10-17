@@ -17,7 +17,9 @@ container with Ctrl+C, or run `docker compose down`.
 The GitHub Actions workflow in `.github/workflows/deploy-lambda.yml` runs on
 pushes to `main` and can also be started manually. It creates the ECR repository
 if it does not exist, builds and pushes an image for the Lambda function's
-architecture, updates the existing Lambda function to that image, and loads
+architecture using Docker Image Manifest V2, Schema 2 with gzip-compressed
+layers, verifies the manifest, config, and layer media types in ECR, updates
+the existing Lambda function to that image, and loads
 parameters recursively from `/sst/passphrase/fastapi-lambdadocker/` into its
 environment. Parameter names relative to that path become environment variable
 names; nested path separators are replaced with underscores. For example,
@@ -37,7 +39,7 @@ workflow uses `production` for pushes to `main` and the selected `dev` or
 `production` environment for manual runs. The credentials must belong to a
 dedicated IAM user with only the deployment permissions the workflow needs:
 `sts:GetCallerIdentity`, `ecr:CreateRepository`,
-`ecr:DescribeRepositories`, `ecr:GetAuthorizationToken`,
+`ecr:DescribeRepositories`, `ecr:BatchGetImage`, `ecr:GetAuthorizationToken`,
 `ecr:BatchCheckLayerAvailability`, `ecr:InitiateLayerUpload`,
 `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`, `ecr:PutImage`,
 `ssm:GetParametersByPath`, `lambda:GetFunctionConfiguration`,
