@@ -80,38 +80,38 @@ jobs:
             --output text)"
           echo "uri=$repository_uri" >> "$GITHUB_OUTPUT"
 
-      # - name: Determine Lambda image architecture
-      #   id: lambda
-      #   shell: bash
-      #   run: |
-      #     set -euo pipefail
-      #     package_type="$(aws lambda get-function-configuration \
-      #       --function-name "$LAMBDA_FUNCTION_NAME" \
-      #       --region "$AWS_REGION" \
-      #       --query 'PackageType' \
-      #       --output text)"
-      #     if [[ "$package_type" != "Image" ]]; then
-      #       echo "::error::Lambda function ${LAMBDA_FUNCTION_NAME} must use the Image package type."
-      #       exit 1
-      #     fi
-      #     architecture="$(aws lambda get-function-configuration \
-      #       --function-name "$LAMBDA_FUNCTION_NAME" \
-      #       --region "$AWS_REGION" \
-      #       --query 'Architectures[0]' \
-      #       --output text)"
-      #     case "$architecture" in
-      #       x86_64) platform=linux/amd64 ;;
-      #       arm64) platform=linux/arm64 ;;
-      #       *)
-      #         echo "::error::Unsupported Lambda architecture: ${architecture}"
-      #         exit 1
-      #         ;;
-      #     esac
-      #     echo "platform=$platform" >> "$GITHUB_OUTPUT"
+      - name: Determine Lambda image architecture
+        id: lambda
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_type="$(aws lambda get-function-configuration \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --query 'PackageType' \
+            --output text)"
+          if [[ "$package_type" != "Image" ]]; then
+            echo "::error::Lambda function ${LAMBDA_FUNCTION_NAME} must use the Image package type."
+            exit 1
+          fi
+          architecture="$(aws lambda get-function-configuration \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Architectures[0]' \
+            --output text)"
+          case "$architecture" in
+            x86_64) platform=linux/amd64 ;;
+            arm64) platform=linux/arm64 ;;
+            *)
+              echo "::error::Unsupported Lambda architecture: ${architecture}"
+              exit 1
+              ;;
+          esac
+          echo "platform=$platform" >> "$GITHUB_OUTPUT"
 
-      # - name: Log in to Amazon ECR
-      #   id: login-ecr
-      #   uses: aws-actions/amazon-ecr-login@v2
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
