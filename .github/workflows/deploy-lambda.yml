@@ -18,10 +18,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_REGION: "us-east-1"
       ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
       LAMBDA_FUNCTION_NAME: ${{ vars.LAMBDA_FUNCTION_NAME }}
-      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       SSM_PARAMETER_PATH: /sst/passphrase/fastapi-lambdadocker/
     steps:
       - name: Check out source
