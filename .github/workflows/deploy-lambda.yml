@@ -27,7 +27,7 @@ jobs:
     environment: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'production' }}
     env:
       AWS_REGION: us-east-1
-      ECR_REPOSITORY: apigateway/fastapilambda
+      ECR_REPOSITORY: gateway-fastapi-lambdafunction
       LAMBDA_FUNCTION_NAME: gateway-fastapi-lambdafunction
       SSM_PARAMETER_PATH: /sst/passphrase/fastapi-lambdadocker/
     steps:
