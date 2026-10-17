@@ -42,7 +42,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
-          for name in AWS_REGION ECR_REPOSITORY LAMBDA_FUNCTION_NAME HTTP_API_ID; do
+          for name in AWS_REGION ECR_REPOSITORY LAMBDA_FUNCTION_NAME; do
             if [[ -z "${!name}" ]]; then
               echo "::error::Set the GitHub Actions variable ${name}."
               exit 1
