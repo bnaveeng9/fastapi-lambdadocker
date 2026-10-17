@@ -113,16 +113,16 @@ jobs:
       #   id: login-ecr
       #   uses: aws-actions/amazon-ecr-login@v2
 
-      # - name: Set up Docker Buildx
-      #   uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      # - name: Build and push Lambda image
-      #   uses: docker/build-push-action@v6
-      #   with:
-      #     context: .
-      #     platforms: ${{ steps.lambda.outputs.platform }}
-      #     push: true
-      #     tags: ${{ steps.ecr.outputs.uri }}:${{ github.sha }}
+      - name: Build and push Lambda image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ steps.lambda.outputs.platform }}
+          push: true
+          tags: ${{ steps.ecr.outputs.uri }}:${{ github.sha }}
 
       # - name: Deploy image to Lambda
       #   shell: bash
