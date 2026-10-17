@@ -29,9 +29,9 @@ async def numbers() -> Response:
 @app.get("/stream", response_class=StreamingResponse)
 async def stream() -> StreamingResponse:
     async def generate() -> AsyncIterator[str]:
-        for i in range(1, 4):
-            if i > 1:
-                await asyncio.sleep(0.25)
+        for i in range(1, 4000):
+            if i > 2:
+                await asyncio.sleep(0.01)
             yield f"chunk {i}\n"
 
     return StreamingResponse(generate(), media_type="text/plain")
