@@ -36,18 +36,22 @@ Configure GitHub Actions with these repository variables:
 - `LAMBDA_FUNCTION_NAME`: existing Lambda function using the container image
   package type.
 
-Add `AWS_ROLE_ARN` as a repository secret. The IAM role must trust GitHub's OIDC
-provider for this repository and allow `sts:GetCallerIdentity`,
-`ecr:CreateRepository`, `ecr:DescribeRepositories`,
-`ecr:GetAuthorizationToken`, `ecr:BatchCheckLayerAvailability`,
-`ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`,
-`ecr:PutImage`, `ssm:GetParametersByPath`,
-`lambda:GetFunctionConfiguration`, `lambda:UpdateFunctionCode`, and
-`lambda:UpdateFunctionConfiguration`. Scope permissions to the selected
-repository, the `/sst/passphrase/fastapi-lambdadocker/*` SSM parameters, and
-function where AWS supports it. The Lambda function must already exist, and its
-execution role and ECR repository permissions must allow Lambda to retrieve the
-image. SecureString parameters are decrypted by the workflow role and added to
-the Lambda environment; restrict access to both the workflow role and function.
-If the parameters use a customer-managed KMS key, also grant the role
-`kms:Decrypt` on that key.
+Add `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` as repository secrets. They
+must belong to a dedicated IAM user with only the deployment permissions the
+workflow needs: `sts:GetCallerIdentity`, `ecr:CreateRepository`,
+`ecr:DescribeRepositories`, `ecr:GetAuthorizationToken`,
+`ecr:BatchCheckLayerAvailability`, `ecr:InitiateLayerUpload`,
+`ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`, `ecr:PutImage`,
+`ssm:GetParametersByPath`, `lambda:GetFunctionConfiguration`,
+`lambda:UpdateFunctionCode`, and `lambda:UpdateFunctionConfiguration`. Scope
+permissions to the selected repository, the
+`/sst/passphrase/fastapi-lambdadocker/*` SSM parameters, and function where AWS
+supports it. The workflow currently uses `us-east-1`; change `AWS_REGION` in
+the workflow if your ECR repository and Lambda function are in another region.
+The Lambda function must already exist, and its execution role and ECR
+repository permissions must allow Lambda to retrieve the image. SecureString
+parameters are decrypted by the workflow credentials and added to the Lambda
+environment; restrict access to both the IAM user and function. If the
+parameters use a customer-managed KMS key, also grant the IAM user
+`kms:Decrypt` on that key. Prefer short-lived OIDC role credentials when
+possible; if using access keys, rotate them regularly and never commit them.

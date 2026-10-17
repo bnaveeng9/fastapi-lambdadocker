@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: lambda-deploy-${{ github.ref }}
@@ -21,7 +20,6 @@ jobs:
       AWS_REGION: "us-east-1"
       ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
       LAMBDA_FUNCTION_NAME: ${{ vars.LAMBDA_FUNCTION_NAME }}
-      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       SSM_PARAMETER_PATH: /sst/passphrase/fastapi-lambdadocker/
     steps:
       - name: Check out source
@@ -29,6 +27,9 @@ jobs:
 
       - name: Validate deployment configuration
         shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
           for name in AWS_REGION ECR_REPOSITORY LAMBDA_FUNCTION_NAME; do
@@ -37,15 +38,16 @@ jobs:
               exit 1
             fi
           done
-          if [[ -z "$AWS_ROLE_ARN" ]]; then
-            echo "::error::Set the AWS_ROLE_ARN GitHub Actions secret."
+          if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
+            echo "::error::Set the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY GitHub Actions secrets."
             exit 1
           fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Prepare ECR repository
