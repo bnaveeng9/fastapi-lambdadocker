@@ -177,7 +177,7 @@ jobs:
             --region "$AWS_REGION"
           aws lambda update-function-configuration \
             --function-name "$LAMBDA_FUNCTION_NAME" \
-            --image-config '{"Command":["fastapi_lambdadocker.handler"]}' \
+            --image-config '{"Command":["fastapi_lambdadocker:app","--host","0.0.0.0","--port","8080"]}' \
             --region "$AWS_REGION"
           aws lambda wait function-updated-v2 \
             --function-name "$LAMBDA_FUNCTION_NAME" \
@@ -325,6 +325,113 @@ jobs:
               --region "$AWS_REGION" >/dev/null
           fi
 
+      - name: Configure streaming Function URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          url_config_file="$RUNNER_TEMP/lambda-function-url-config.json"
+          url_config_error_file="$RUNNER_TEMP/lambda-function-url-config-error.txt"
+          if aws lambda get-function-url-config \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --output json > "$url_config_file" 2> "$url_config_error_file"; then
+            current_auth_type="$(jq -r '.AuthType' "$url_config_file")"
+            current_invoke_mode="$(jq -r '.InvokeMode' "$url_config_file")"
+            if [[ "$current_auth_type" != "NONE" || "$current_invoke_mode" != "RESPONSE_STREAM" ]]; then
+              aws lambda update-function-url-config \
+                --function-name "$LAMBDA_FUNCTION_NAME" \
+                --auth-type NONE \
+                --invoke-mode RESPONSE_STREAM \
+                --region "$AWS_REGION" >/dev/null
+            fi
+          else
+            if ! grep -Eq 'ResourceNotFoundException|FunctionUrlConfigNotFoundException' "$url_config_error_file"; then
+              cat "$url_config_error_file" >&2
+              exit 1
+            fi
+            aws lambda create-function-url-config \
+              --function-name "$LAMBDA_FUNCTION_NAME" \
+              --auth-type NONE \
+              --invoke-mode RESPONSE_STREAM \
+              --region "$AWS_REGION" >/dev/null
+          fi
+
+          policy_file="$RUNNER_TEMP/lambda-function-url-policy.json"
+          policy_error_file="$RUNNER_TEMP/lambda-function-url-policy-error.txt"
+          if ! aws lambda get-policy \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --output json > "$policy_file" 2> "$policy_error_file"; then
+            if ! grep -q 'ResourceNotFoundException' "$policy_error_file"; then
+              cat "$policy_error_file" >&2
+              exit 1
+            fi
+            printf '{"Statement":[]}\n' > "$policy_file"
+          fi
+          policy="$(jq -er '.Policy' "$policy_file")"
+
+          ensure_function_url_permission() {
+            local statement_id="$1"
+            local action="$2"
+            local condition_type="$3"
+            local condition_key="$4"
+            local condition_value="$5"
+            local existing_statement
+            existing_statement="$(jq -c \
+              --arg sid "$statement_id" \
+              '(.Statement | if type == "array" then . else [.] end) | map(select(.Sid == $sid)) | .[0] // empty' \
+              <<< "$policy")"
+            if [[ -n "$existing_statement" ]]; then
+              if ! jq -e \
+                --arg sid "$statement_id" \
+                --arg action "$action" \
+                --arg condition_type "$condition_type" \
+                --arg condition_key "$condition_key" \
+                --arg condition_value "$condition_value" \
+                '(.Statement | if type == "array" then . else [.] end) | any(.[]; .Sid == $sid and .Effect == "Allow" and .Action == $action and (.Principal == "*" or .Principal.AWS == "*") and (.Condition[$condition_type][$condition_key] | tostring) == $condition_value)' \
+                <<< "$policy" >/dev/null; then
+                echo "::error::Lambda permission ${statement_id} exists with unexpected action or conditions."
+                exit 1
+              fi
+              return
+            fi
+
+            local -a permission_args
+            permission_args=(
+              --function-name "$LAMBDA_FUNCTION_NAME"
+              --statement-id "$statement_id"
+              --action "$action"
+              --principal '*'
+              --region "$AWS_REGION"
+            )
+            if [[ "$condition_key" == "lambda:FunctionUrlAuthType" ]]; then
+              permission_args+=(--function-url-auth-type NONE)
+            else
+              permission_args+=(--invoked-via-function-url)
+            fi
+            aws lambda add-permission "${permission_args[@]}" >/dev/null
+          }
+
+          ensure_function_url_permission \
+            "function-url-public-invoke-url" \
+            "lambda:InvokeFunctionUrl" \
+            "StringEquals" \
+            "lambda:FunctionUrlAuthType" \
+            "NONE"
+          ensure_function_url_permission \
+            "function-url-public-invoke" \
+            "lambda:InvokeFunction" \
+            "Bool" \
+            "lambda:InvokedViaFunctionUrl" \
+            "true"
+
+          function_url="$(aws lambda get-function-url-config \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --query FunctionUrl \
+            --output text)"
+          echo "Function URL (streaming route): ${function_url}stream" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Load Parameter Store values into Lambda environment
         shell: bash
         run: |
@@ -370,7 +477,7 @@ jobs:
             --region "$AWS_REGION" \
             --output json > "$current_config_file"
           jq '.Environment.Variables // {}' "$current_config_file" > "$current_variables_file"
-          jq -s '.[0] * .[1] | {Variables: .}' \
+          jq -s '.[0] * .[1] * {"AWS_LWA_INVOKE_MODE":"response_stream"} | {Variables: .}' \
             "$current_variables_file" \
             "$parameter_variables_file" > "$environment_file"
 

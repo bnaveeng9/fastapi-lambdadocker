@@ -1,6 +1,9 @@
+import asyncio
 import unittest
 
-from fastapi_lambdadocker import handler
+from fastapi.responses import StreamingResponse
+
+from fastapi_lambdadocker import handler, stream
 
 
 def http_api_event(path: str) -> dict[str, object]:
@@ -73,6 +76,20 @@ class ApiRouteTests(unittest.TestCase):
         self.assertEqual(
             numbers_response["headers"]["content-type"],
             "text/plain; charset=utf-8",
+        )
+
+    def test_stream_route_yields_incremental_plain_text_chunks(self) -> None:
+        response = asyncio.run(stream())
+
+        self.assertIsInstance(response, StreamingResponse)
+        self.assertTrue(response.media_type.startswith("text/plain"))
+
+        async def collect_chunks() -> list[str]:
+            return [chunk async for chunk in response.body_iterator]
+
+        self.assertEqual(
+            asyncio.run(collect_chunks()),
+            ["chunk 1\n", "chunk 2\n", "chunk 3\n"],
         )
 
 

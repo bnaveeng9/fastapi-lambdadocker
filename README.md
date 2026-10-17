@@ -21,8 +21,8 @@ curl http://localhost:9000/story/stream/home
 The root and `/health` endpoints return `{"status":"ok"}`.
 
 Stop the container with Ctrl+C, or run `docker compose down`. The Docker image
-retains its Lambda handler command for AWS deployments; Compose overrides it
-locally to run Uvicorn.
+runs Uvicorn on port 8080 both locally and in Lambda. The Lambda Web Adapter
+extension is inactive outside Lambda.
 
 ## Deploy to AWS Lambda
 
@@ -32,14 +32,15 @@ if it does not exist, builds and pushes an image for the Lambda function's
 architecture using Docker Image Manifest V2, Schema 2 with gzip-compressed
 layers, verifies the manifest, config, and layer media types in ECR, updates
 the existing Lambda function to that image, configures the HTTP API's `$default`
-route as a Lambda proxy integration, and loads
+route as a Lambda proxy integration, configures a public Lambda Function URL
+with `RESPONSE_STREAM`, and loads
 parameters recursively from `/sst/passphrase/fastapi-lambdadocker/` into its
 environment. Parameter names relative to that path become environment variable
 names; nested path separators are replaced with underscores. For example,
 `/sst/passphrase/fastapi-lambdadocker/API_TOKEN` becomes `API_TOKEN`.
-The workflow also sets the Lambda image command to
-`fastapi_lambdadocker.handler`, uses the Lambda function ARN for the HTTP API
-integration, and grants invocation permission for the `$default` route.
+The AWS Lambda Web Adapter serves the FastAPI application for both the HTTP API
+and Function URL invocations. HTTP API responses remain buffered; the Function
+URL enables Lambda response streaming.
 
 Configure GitHub Actions with these variables, either at the repository level
 or in each GitHub Environment used for deployment:
@@ -62,7 +63,9 @@ dedicated IAM user with only the deployment permissions the workflow needs:
 `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`, `ecr:PutImage`,
 `ssm:GetParametersByPath`, `lambda:GetFunctionConfiguration`,
 `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`,
-`lambda:GetPolicy`, `lambda:AddPermission`, `apigateway:GET`,
+`lambda:GetFunctionUrlConfig`, `lambda:CreateFunctionUrlConfig`,
+`lambda:UpdateFunctionUrlConfig`, `lambda:GetPolicy`, `lambda:AddPermission`,
+`apigateway:GET`,
 `apigateway:POST`, and `apigateway:PATCH`. Scope permissions to the selected
 repository, API, the
 `/sst/passphrase/fastapi-lambdadocker/*` SSM parameters, and function where AWS
@@ -76,15 +79,23 @@ The root path and `/health` return `{"status":"ok"}`.
 Set `HTTP_API_ID` to the API behind the public endpoint, then run the workflow
 to apply the route configuration.
 
+The workflow also creates or updates the Lambda Function URL in
+`RESPONSE_STREAM` mode and grants anonymous URL invocation (`AuthType=NONE`).
+The URL is included in the deployment workflow summary. The Function URL is
+public and points to the same Lambda/FastAPI app as the HTTP API, so every app
+route is reachable through both URLs; use the HTTP API for ordinary routes and
+the Function URL's `/stream` path for incremental output. Choose separate
+functions if the Function URL must not expose the normal routes.
+
 ## Streaming responses
 
 FastAPI can produce incremental HTTP responses with an ASGI server such as
 Uvicorn and `StreamingResponse`. Streaming only reaches the client when every
 layer between the application and client forwards chunks without buffering.
 The application must also yield data progressively; returning a complete
-`Response` (as `/numbers` currently does) is not a streaming response. The
-`/story/stream/home` route currently returns ordinary JSON and is not an SSE
-endpoint.
+`Response` (as `/numbers` currently does) is not a streaming response. The new
+`/stream` route yields three plain-text chunks with a delay between chunks.
+`/story/stream/home` remains an ordinary JSON route, not an SSE endpoint.
 
 ### Hosting choices
 
@@ -92,37 +103,45 @@ endpoint.
 | --- | --- | --- |
 | Uvicorn locally or on a VM | Yes, directly; verify any reverse proxy in front of it. | Development, a small deployment, or full control of the HTTP stack. |
 | Docker on a container platform (for example ECS/Fargate, Azure Container Apps, Cloud Run, or Kubernetes) | Generally yes, if the platform ingress/load balancer supports long-lived responses and is configured not to buffer them. | A continuously running ASGI service, predictable streaming, or ordinary container operations. |
-| Lambda behind API Gateway HTTP API (the current deployment) | No. The current Mangum + HTTP API proxy path returns a buffered response. | Short request/response APIs where server-side streaming is not required. |
-| Lambda Function URL | Yes, with response streaming enabled and a compatible runtime/adapter. | A simpler AWS HTTP endpoint where API Gateway's additional routing and authorization features are not needed. |
+| Lambda behind API Gateway HTTP API | No. HTTP API buffers Lambda proxy responses. | Normal JSON/REST endpoints that need API Gateway routing. |
+| Lambda Function URL (this deployment's `/stream` path) | Yes, with `RESPONSE_STREAM` and the Lambda Web Adapter. | Incremental response delivery over a direct Lambda URL. |
 | Lambda behind API Gateway REST API | Yes, with an `AWS_PROXY` or `HTTP_PROXY` integration configured with response transfer mode `STREAM`, plus a streaming-capable Lambda runtime/adapter. | Streaming with REST API features such as API keys, usage plans, or API Gateway controls. |
 | WebSocket service | Bidirectional messages, not a streamed HTTP response. | Interactive two-way communication such as live collaboration; use a WebSocket-capable host and endpoint rather than treating it as SSE. |
 
-The first two paths run FastAPI as a normal ASGI application. This repository's
-Docker image currently starts the Lambda handler by default; the Compose
-configuration overrides that command to start Uvicorn for local HTTP hosting.
-For a non-Lambda container deployment, configure its command to run Uvicorn,
-for example:
+The local Uvicorn and container-platform options run FastAPI as a normal ASGI
+application. This repository's container starts Uvicorn directly, with the
+Lambda Web Adapter translating Lambda events into HTTP requests. The same app
+is integrated with the HTTP API for ordinary routes and the Function URL for
+streaming. To verify chunk delivery locally:
 
 ```sh
-uvicorn fastapi_lambdadocker:app --host 0.0.0.0 --port 8080
+curl -N http://localhost:9000/stream
 ```
 
-For AWS Lambda, deploying a `StreamingResponse` alone is not sufficient:
-Mangum's standard API Gateway HTTP API integration and the HTTP API response
-path used by this workflow are buffered. Lambda response streaming needs a
-compatible runtime/adapter (for example, AWS Lambda Web Adapter) as well as a
-streaming-capable invocation path. For a Function URL, enable response
-streaming (`RESPONSE_STREAM`) and configure the adapter/runtime accordingly.
-For API Gateway, use a REST API proxy integration and set its response transfer
-mode to `STREAM`; HTTP APIs do not support response streaming. These are
-different architectures and are not configured by this repository's workflow.
+For AWS, the image sets `AWS_LWA_INVOKE_MODE=response_stream` and includes the
+AWS Lambda Web Adapter. The deployment workflow configures the Function URL
+with `InvokeMode=RESPONSE_STREAM`. API Gateway HTTP API remains the entry point
+for normal endpoints; HTTP APIs do not support response streaming, so use the
+Function URL for `/stream`. Because the Function URL uses `AuthType=NONE`, it
+is publicly invokable and exposes every route on the shared FastAPI app.
+
+After deployment, set `FUNCTION_URL` to the base URL printed in the workflow
+summary, including its trailing slash, then test incrementality:
+
+```sh
+curl -N "${FUNCTION_URL}stream"
+```
+
+The three chunks should arrive progressively rather than only after the
+connection closes. Lambda Function URL response streaming is unavailable when
+the function is in a VPC. Confirm current regional availability and AWS
+streaming limits before relying on this design.
 
 AWS streaming also has operational constraints: REST API streams can run for
 up to 15 minutes, are subject to endpoint-specific idle timeouts, and responses
 larger than the initial unthrottled portion are bandwidth-limited. Lambda
-Function URLs do not support response streaming when the function is in a VPC.
-Check the current AWS documentation and regional availability before selecting
-this design:
+Function URLs also have endpoint-specific idle timeouts. Check current AWS
+documentation and regional availability before selecting this design:
 [Lambda response streaming](https://docs.aws.amazon.com/lambda/latest/dg/configuration-response-streaming.html),
 [API Gateway response streaming](https://docs.aws.amazon.com/apigateway/latest/developerguide/response-transfer-mode.html).
 
@@ -148,10 +167,9 @@ this design:
   download URL is often simpler and more scalable than holding an application
   or Lambda invocation open.
 
-No streaming endpoint is currently implemented in this sample. Add and test
-the FastAPI streaming route separately, then validate incremental delivery
-through the complete deployed path (including proxies, timeouts, disconnects,
-and the actual client) before relying on it in production.
+Validate incremental delivery through the complete deployed path (including
+proxies, timeouts, disconnects, and the actual client) before relying on it in
+production.
 
 The Lambda function must already exist, and its execution role and ECR
 repository permissions must allow Lambda to retrieve the image. SecureString
