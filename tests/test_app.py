@@ -34,6 +34,18 @@ def http_api_event(path: str) -> dict[str, object]:
 
 
 class ApiRouteTests(unittest.TestCase):
+    def test_root_returns_health_status(self) -> None:
+        response = handler(http_api_event("/"), None)
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(response["body"], '{"status":"ok"}')
+
+    def test_health_route_returns_health_status(self) -> None:
+        response = handler(http_api_event("/health"), None)
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(response["body"], '{"status":"ok"}')
+
     def test_story_path_returns_json_greeting(self) -> None:
         response = handler(http_api_event("/story/stream/home"), None)
 

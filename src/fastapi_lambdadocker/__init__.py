@@ -5,6 +5,12 @@ from mangum import Mangum
 app = FastAPI(title="fastapi-lambdadocker")
 
 
+@app.get("/health")
+@app.get("/")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.get("/home")
 @app.get("/story/stream/home")
 async def root() -> dict[str, str]:

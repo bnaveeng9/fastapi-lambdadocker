@@ -11,10 +11,14 @@ docker compose up --build
 The API is available directly at <http://localhost:9000>. For example:
 
 ```sh
+curl http://localhost:9000/
+curl http://localhost:9000/health
 curl http://localhost:9000/home
 curl http://localhost:9000/numbers
 curl http://localhost:9000/story/stream/home
 ```
+
+The root and `/health` endpoints return `{"status":"ok"}`.
 
 Stop the container with Ctrl+C, or run `docker compose down`. The Docker image
 retains its Lambda handler command for AWS deployments; Compose overrides it
@@ -33,6 +37,9 @@ parameters recursively from `/sst/passphrase/fastapi-lambdadocker/` into its
 environment. Parameter names relative to that path become environment variable
 names; nested path separators are replaced with underscores. For example,
 `/sst/passphrase/fastapi-lambdadocker/API_TOKEN` becomes `API_TOKEN`.
+The workflow also sets the Lambda image command to
+`fastapi_lambdadocker.handler`, uses the Lambda function ARN for the HTTP API
+integration, and grants invocation permission for the `$default` route.
 
 Configure GitHub Actions with these variables, either at the repository level
 or in each GitHub Environment used for deployment:
@@ -65,6 +72,7 @@ The workflow creates or updates a `$default` Lambda proxy route and ensures the
 `$default` stage auto-deploys. That route forwards every request to FastAPI, so
 FastAPI handles paths such as `/home`, `/numbers`, and
 `/story/stream/home`. The story path returns the same JSON greeting as `/home`.
+The root path and `/health` return `{"status":"ok"}`.
 Set `HTTP_API_ID` to the API behind the public endpoint, then run the workflow
 to apply the route configuration.
 
