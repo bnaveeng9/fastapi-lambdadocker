@@ -5,7 +5,15 @@ on:
     branches:
       - main
   workflow_dispatch:
-
+    inputs:
+      stage:
+        description: Deploy stage
+        required: true
+        default: production
+        type: choice
+        options:
+          - dev
+          - production
 permissions:
   contents: read
 
