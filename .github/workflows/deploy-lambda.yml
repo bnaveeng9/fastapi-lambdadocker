@@ -26,9 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'production' }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-      LAMBDA_FUNCTION_NAME: ${{ vars.LAMBDA_FUNCTION_NAME }}
+      AWS_REGION: us-east-1
+      ECR_REPOSITORY: apigateway/fastapilambda
+      LAMBDA_FUNCTION_NAME: gateway-fastapi-lambdafunction
       SSM_PARAMETER_PATH: /sst/passphrase/fastapi-lambdadocker/
     steps:
       - name: Check out source
