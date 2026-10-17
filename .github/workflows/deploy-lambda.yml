@@ -183,147 +183,147 @@ jobs:
             --function-name "$LAMBDA_FUNCTION_NAME" \
             --region "$AWS_REGION"
 
-      - name: Configure HTTP API default route
-        shell: bash
-        run: |
-          set -euo pipefail
-          lambda_arn="$(aws lambda get-function-configuration \
-            --function-name "$LAMBDA_FUNCTION_NAME" \
-            --region "$AWS_REGION" \
-            --query FunctionArn \
-            --output text)"
-          integration_uri="$lambda_arn"
-          integrations_file="$RUNNER_TEMP/http-api-integrations.json"
-          routes_file="$RUNNER_TEMP/http-api-routes.json"
-          stages_file="$RUNNER_TEMP/http-api-stages.json"
+      # - name: Configure HTTP API default route
+      #   shell: bash
+      #   run: |
+      #     set -euo pipefail
+      #     lambda_arn="$(aws lambda get-function-configuration \
+      #       --function-name "$LAMBDA_FUNCTION_NAME" \
+      #       --region "$AWS_REGION" \
+      #       --query FunctionArn \
+      #       --output text)"
+      #     integration_uri="$lambda_arn"
+      #     integrations_file="$RUNNER_TEMP/http-api-integrations.json"
+      #     routes_file="$RUNNER_TEMP/http-api-routes.json"
+      #     stages_file="$RUNNER_TEMP/http-api-stages.json"
 
-          aws apigatewayv2 get-integrations \
-            --api-id "$HTTP_API_ID" \
-            --region "$AWS_REGION" \
-            --output json > "$integrations_file"
-          integration_id="$(jq -r \
-            --arg uri "$integration_uri" \
-            '[.Items[]? | select(.IntegrationUri == $uri) | .IntegrationId][0] // empty' \
-            "$integrations_file")"
-          if [[ -z "$integration_id" ]]; then
-            integration_id="$(aws apigatewayv2 create-integration \
-              --api-id "$HTTP_API_ID" \
-              --integration-type AWS_PROXY \
-              --integration-uri "$integration_uri" \
-              --payload-format-version 2.0 \
-              --region "$AWS_REGION" \
-              --query IntegrationId \
-              --output text)"
-          fi
+      #     aws apigatewayv2 get-integrations \
+      #       --api-id "$HTTP_API_ID" \
+      #       --region "$AWS_REGION" \
+      #       --output json > "$integrations_file"
+      #     integration_id="$(jq -r \
+      #       --arg uri "$integration_uri" \
+      #       '[.Items[]? | select(.IntegrationUri == $uri) | .IntegrationId][0] // empty' \
+      #       "$integrations_file")"
+      #     if [[ -z "$integration_id" ]]; then
+      #       integration_id="$(aws apigatewayv2 create-integration \
+      #         --api-id "$HTTP_API_ID" \
+      #         --integration-type AWS_PROXY \
+      #         --integration-uri "$integration_uri" \
+      #         --payload-format-version 2.0 \
+      #         --region "$AWS_REGION" \
+      #         --query IntegrationId \
+      #         --output text)"
+      #     fi
 
-          aws apigatewayv2 get-routes \
-            --api-id "$HTTP_API_ID" \
-            --region "$AWS_REGION" \
-            --output json > "$routes_file"
-          default_route_id="$(jq -r \
-            '[.Items[]? | select(.RouteKey == "$default") | .RouteId][0] // empty' \
-            "$routes_file")"
-          route_target="integrations/${integration_id}"
-          if [[ -z "$default_route_id" ]]; then
-            aws apigatewayv2 create-route \
-              --api-id "$HTTP_API_ID" \
-              --route-key '$default' \
-              --target "$route_target" \
-              --region "$AWS_REGION" >/dev/null
-          else
-            current_target="$(jq -r \
-              --arg route_id "$default_route_id" \
-              '.Items[]? | select(.RouteId == $route_id) | .Target' \
-              "$routes_file")"
-            if [[ "$current_target" != "$route_target" ]]; then
-              aws apigatewayv2 update-route \
-                --api-id "$HTTP_API_ID" \
-                --route-id "$default_route_id" \
-                --target "$route_target" \
-                --region "$AWS_REGION" >/dev/null
-            fi
-          fi
+      #     aws apigatewayv2 get-routes \
+      #       --api-id "$HTTP_API_ID" \
+      #       --region "$AWS_REGION" \
+      #       --output json > "$routes_file"
+      #     default_route_id="$(jq -r \
+      #       '[.Items[]? | select(.RouteKey == "$default") | .RouteId][0] // empty' \
+      #       "$routes_file")"
+      #     route_target="integrations/${integration_id}"
+      #     if [[ -z "$default_route_id" ]]; then
+      #       aws apigatewayv2 create-route \
+      #         --api-id "$HTTP_API_ID" \
+      #         --route-key '$default' \
+      #         --target "$route_target" \
+      #         --region "$AWS_REGION" >/dev/null
+      #     else
+      #       current_target="$(jq -r \
+      #         --arg route_id "$default_route_id" \
+      #         '.Items[]? | select(.RouteId == $route_id) | .Target' \
+      #         "$routes_file")"
+      #       if [[ "$current_target" != "$route_target" ]]; then
+      #         aws apigatewayv2 update-route \
+      #           --api-id "$HTTP_API_ID" \
+      #           --route-id "$default_route_id" \
+      #           --target "$route_target" \
+      #           --region "$AWS_REGION" >/dev/null
+      #       fi
+      #     fi
 
-          aws apigatewayv2 get-stages \
-            --api-id "$HTTP_API_ID" \
-            --region "$AWS_REGION" \
-            --output json > "$stages_file"
-          default_stage_autodeploy="$(jq -r \
-            '[.Items[]? | select(.StageName == "$default") | .AutoDeploy][0] // empty' \
-            "$stages_file")"
-          if [[ -z "$default_stage_autodeploy" ]]; then
-            aws apigatewayv2 create-stage \
-              --api-id "$HTTP_API_ID" \
-              --stage-name '$default' \
-              --auto-deploy \
-              --region "$AWS_REGION" >/dev/null
-          elif [[ "$default_stage_autodeploy" != "true" ]]; then
-            aws apigatewayv2 update-stage \
-              --api-id "$HTTP_API_ID" \
-              --stage-name '$default' \
-              --auto-deploy \
-              --region "$AWS_REGION" >/dev/null
-          fi
+      #     aws apigatewayv2 get-stages \
+      #       --api-id "$HTTP_API_ID" \
+      #       --region "$AWS_REGION" \
+      #       --output json > "$stages_file"
+      #     default_stage_autodeploy="$(jq -r \
+      #       '[.Items[]? | select(.StageName == "$default") | .AutoDeploy][0] // empty' \
+      #       "$stages_file")"
+      #     if [[ -z "$default_stage_autodeploy" ]]; then
+      #       aws apigatewayv2 create-stage \
+      #         --api-id "$HTTP_API_ID" \
+      #         --stage-name '$default' \
+      #         --auto-deploy \
+      #         --region "$AWS_REGION" >/dev/null
+      #     elif [[ "$default_stage_autodeploy" != "true" ]]; then
+      #       aws apigatewayv2 update-stage \
+      #         --api-id "$HTTP_API_ID" \
+      #         --stage-name '$default' \
+      #         --auto-deploy \
+      #         --region "$AWS_REGION" >/dev/null
+      #     fi
 
-          account_id="$(aws sts get-caller-identity \
-            --query Account \
-            --output text)"
-          statement_id="apigateway-${HTTP_API_ID}"
-          source_arn="arn:aws:execute-api:${AWS_REGION}:${account_id}:${HTTP_API_ID}/*/*/*"
-          default_statement_id="${statement_id}-default-route"
-          default_source_arn="arn:aws:execute-api:${AWS_REGION}:${account_id}:${HTTP_API_ID}/\$default/\$default"
-          policy_file="$RUNNER_TEMP/lambda-policy.json"
-          policy_error_file="$RUNNER_TEMP/lambda-policy-error.txt"
-          add_permission=true
-          add_default_permission=true
-          if aws lambda get-policy \
-            --function-name "$LAMBDA_FUNCTION_NAME" \
-            --region "$AWS_REGION" \
-            --output json > "$policy_file" 2> "$policy_error_file"; then
-            policy="$(jq -er '.Policy' "$policy_file")"
-            if jq -e \
-              --arg sid "$statement_id" \
-              '(.Statement | if type == "array" then . else [.] end) | any(.Sid == $sid)' \
-              <<< "$policy" >/dev/null; then
-              add_permission=false
-            fi
-            if jq -e \
-              --arg sid "$default_statement_id" \
-              --arg source_arn "$default_source_arn" \
-              '(.Statement | if type == "array" then . else [.] end) | any(.Sid == $sid and .Condition.ArnLike["AWS:SourceArn"] == $source_arn)' \
-              <<< "$policy" >/dev/null; then
-              add_default_permission=false
-            elif jq -e \
-              --arg sid "$default_statement_id" \
-              '(.Statement | if type == "array" then . else [.] end) | any(.Sid == $sid)' \
-              <<< "$policy" >/dev/null; then
-              echo "::error::Lambda permission ${default_statement_id} exists with an unexpected source ARN."
-              exit 1
-            fi
-          else
-            if ! grep -q 'ResourceNotFoundException' "$policy_error_file"; then
-              cat "$policy_error_file" >&2
-              exit 1
-            fi
-          fi
-          if [[ "$add_permission" == true ]]; then
-            aws lambda add-permission \
-              --function-name "$LAMBDA_FUNCTION_NAME" \
-              --statement-id "$statement_id" \
-              --action lambda:InvokeFunction \
-              --principal apigateway.amazonaws.com \
-              --source-arn "$source_arn" \
-              --region "$AWS_REGION" >/dev/null
-          fi
-          if [[ "$add_default_permission" == true ]]; then
-            aws lambda add-permission \
-              --function-name "$LAMBDA_FUNCTION_NAME" \
-              --statement-id "$default_statement_id" \
-              --action lambda:InvokeFunction \
-              --principal apigateway.amazonaws.com \
-              --source-arn "$default_source_arn" \
-              --region "$AWS_REGION" >/dev/null
-          fi
+      #     account_id="$(aws sts get-caller-identity \
+      #       --query Account \
+      #       --output text)"
+      #     statement_id="apigateway-${HTTP_API_ID}"
+      #     source_arn="arn:aws:execute-api:${AWS_REGION}:${account_id}:${HTTP_API_ID}/*/*/*"
+      #     default_statement_id="${statement_id}-default-route"
+      #     default_source_arn="arn:aws:execute-api:${AWS_REGION}:${account_id}:${HTTP_API_ID}/\$default/\$default"
+      #     policy_file="$RUNNER_TEMP/lambda-policy.json"
+      #     policy_error_file="$RUNNER_TEMP/lambda-policy-error.txt"
+      #     add_permission=true
+      #     add_default_permission=true
+      #     if aws lambda get-policy \
+      #       --function-name "$LAMBDA_FUNCTION_NAME" \
+      #       --region "$AWS_REGION" \
+      #       --output json > "$policy_file" 2> "$policy_error_file"; then
+      #       policy="$(jq -er '.Policy' "$policy_file")"
+      #       if jq -e \
+      #         --arg sid "$statement_id" \
+      #         '(.Statement | if type == "array" then . else [.] end) | any(.Sid == $sid)' \
+      #         <<< "$policy" >/dev/null; then
+      #         add_permission=false
+      #       fi
+      #       if jq -e \
+      #         --arg sid "$default_statement_id" \
+      #         --arg source_arn "$default_source_arn" \
+      #         '(.Statement | if type == "array" then . else [.] end) | any(.Sid == $sid and .Condition.ArnLike["AWS:SourceArn"] == $source_arn)' \
+      #         <<< "$policy" >/dev/null; then
+      #         add_default_permission=false
+      #       elif jq -e \
+      #         --arg sid "$default_statement_id" \
+      #         '(.Statement | if type == "array" then . else [.] end) | any(.Sid == $sid)' \
+      #         <<< "$policy" >/dev/null; then
+      #         echo "::error::Lambda permission ${default_statement_id} exists with an unexpected source ARN."
+      #         exit 1
+      #       fi
+      #     else
+      #       if ! grep -q 'ResourceNotFoundException' "$policy_error_file"; then
+      #         cat "$policy_error_file" >&2
+      #         exit 1
+      #       fi
+      #     fi
+      #     if [[ "$add_permission" == true ]]; then
+      #       aws lambda add-permission \
+      #         --function-name "$LAMBDA_FUNCTION_NAME" \
+      #         --statement-id "$statement_id" \
+      #         --action lambda:InvokeFunction \
+      #         --principal apigateway.amazonaws.com \
+      #         --source-arn "$source_arn" \
+      #         --region "$AWS_REGION" >/dev/null
+      #     fi
+      #     if [[ "$add_default_permission" == true ]]; then
+      #       aws lambda add-permission \
+      #         --function-name "$LAMBDA_FUNCTION_NAME" \
+      #         --statement-id "$default_statement_id" \
+      #         --action lambda:InvokeFunction \
+      #         --principal apigateway.amazonaws.com \
+      #         --source-arn "$default_source_arn" \
+      #         --region "$AWS_REGION" >/dev/null
+      #     fi
 
       - name: Configure streaming Function URL
         shell: bash
