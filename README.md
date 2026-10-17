@@ -1,16 +1,23 @@
 # fastapi-lambdadocker
 
-## Run the Lambda container locally
+## Run the API container locally
 
-Build the Lambda image and start the AWS Lambda Runtime Interface Emulator:
+Build and start the API with Uvicorn:
 
 ```sh
 docker compose up --build
 ```
 
-Invoke the Lambda handler by posting an event, such as an API Gateway event, to
-<http://localhost:9000/2015-03-31/functions/function/invocations>. Stop the
-container with Ctrl+C, or run `docker compose down`.
+The API is available directly at <http://localhost:9000>. For example:
+
+```sh
+curl http://localhost:9000/home
+curl http://localhost:9000/numbers
+```
+
+Stop the container with Ctrl+C, or run `docker compose down`. The Docker image
+retains its Lambda handler command for AWS deployments; Compose overrides it
+locally to run Uvicorn.
 
 ## Deploy to AWS Lambda
 

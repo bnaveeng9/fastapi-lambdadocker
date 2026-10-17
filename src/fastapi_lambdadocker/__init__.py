@@ -2,8 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
-from h11 import Response
+from fastapi.responses import Response
 from mangum import Mangum
 
 app = FastAPI(title="fastapi-lambdadocker")
