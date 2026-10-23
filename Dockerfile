@@ -8,7 +8,9 @@ LABEL version="1.0.0"
 
 WORKDIR ${LAMBDA_TASK_ROOT}
 
-ENV AWS_LWA_INVOKE_MODE=response_stream
+ENV AWS_LWA_INVOKE_MODE=response_stream \
+    GOOGLE_OAUTH_INTERACTIVE=false \
+    GOOGLE_TOKEN_FILE=/tmp/gmail-user-token.json
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

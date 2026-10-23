@@ -1,2 +1,6 @@
 .venv
 .venv/*
+*__pycache__
+src/fastapi_lambdadocker/__pycache__
+src/fastapi_lambdadocker/__pycache__/*
+.env

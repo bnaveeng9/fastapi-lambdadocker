@@ -19,10 +19,44 @@ curl http://localhost:9000/story/stream/home
 ```
 
 The root and `/health` endpoints return `{"status":"ok"}`.
+The existing REST endpoints remain available, and the MCP Streamable HTTP
+endpoint is available at <http://localhost:9000/mcp>.
+
+The `get_otp_messages` MCP tool returns the same recent Gmail inbox messages as
+`GET /otp`. Use an MCP client configured to connect to
+`http://localhost:9000/mcp`; do not use `/otp` as the MCP URL. Both interfaces
+use the same Gmail OAuth configuration described below. This server does not
+authenticate callers, so do not expose `/otp` or `/mcp` to untrusted networks
+without adding authentication at the application or gateway layer.
 
 Stop the container with Ctrl+C, or run `docker compose down`. The Docker image
 runs Uvicorn on port 8080 both locally and in Lambda. The Lambda Web Adapter
 extension is inactive outside Lambda.
+
+### Gmail `/otp` authorization in Docker
+
+The container cannot open a browser for Gmail consent. Configure these values
+in a root-level `.env` file for Docker Compose, or supply them through your
+deployment secret manager:
+
+```dotenv
+GOOGLE_CLIENT_ID=your-oauth-client-id
+GOOGLE_CLIENT_SECRET=your-oauth-client-secret
+GOOGLE_REFRESH_TOKEN=your-google-refresh-token
+```
+
+Create the refresh token through Google's OAuth consent flow for the Gmail
+read-only scope. The existing local authorization flow can be used to create
+the initial saved token; provide its refresh token to the container securely.
+Do not commit `.env` files or place credentials in the image. Docker excludes
+dotenv files from the build context, while Compose passes the three variables
+to the container. The image writes temporary access-token state to `/tmp` and
+uses the configured refresh token again when needed.
+
+For Lambda deployments, provide `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+and `GOOGLE_REFRESH_TOKEN` as parameters under the deployment workflow's
+`/sst/passphrase/fastapi-lambdadocker/` parameter path. `/otp` returns HTTP 503
+with setup guidance when the noninteractive OAuth configuration is missing.
 
 ## Deploy to AWS Lambda
 

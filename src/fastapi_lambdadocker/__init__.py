@@ -1,11 +1,24 @@
 import asyncio
 from collections.abc import AsyncIterator
-
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response, StreamingResponse
+from fastmcp import FastMCP
 from mangum import Mangum
+from fastapi_lambdadocker.gmailmessages import gmailmessagesjson
 
-app = FastAPI(title="fastapi-lambdadocker")
+
+mcp = FastMCP("gmailotp-mcpserver")
+
+
+@mcp.tool
+def get_otp_messages() -> list[dict[str, str]]:
+    """Return recent Gmail inbox messages."""
+    return gmailmessagesjson()
+
+
+mcp_app = mcp.http_app(path="/", stateless_http=True)
+app = FastAPI(title="gmailotp-mcpserver", lifespan=mcp_app.lifespan)
+app.mount("/mcp", mcp_app)
 
 
 @app.get("/health")
@@ -37,9 +50,16 @@ async def stream() -> StreamingResponse:
     return StreamingResponse(generate(), media_type="text/plain")
 
 
+@app.get("/otp")
+def otpmessage() -> list[dict[str, str]]:
+    try:
+        return gmailmessagesjson()
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
 def main() -> None:
     import uvicorn
-
     uvicorn.run("fastapi_lambdadocker:app", host="localhost", port=8000)
 
 

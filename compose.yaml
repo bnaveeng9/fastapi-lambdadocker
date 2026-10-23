@@ -6,3 +6,9 @@ services:
     image: fastapi-lambdadocker:local
     ports:
       - "9000:8080"
+    environment:
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REFRESH_TOKEN: ${GOOGLE_REFRESH_TOKEN:-}
+      GOOGLE_OAUTH_INTERACTIVE: "false"
+      GOOGLE_TOKEN_FILE: /tmp/gmail-user-token.json
