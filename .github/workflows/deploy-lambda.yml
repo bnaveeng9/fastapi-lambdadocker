@@ -1,0 +1,490 @@
+name: Build and deploy to AWS Lambda
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Deploy stage
+        required: true
+        default: production
+        type: choice
+        options:
+          - dev
+          - production
+permissions:
+  contents: read
+
+concurrency:
+  group: lambda-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'production' }}
+    env:
+      AWS_REGION: us-east-1
+      ECR_REPOSITORY: gateway-fastapi-ecrrepo
+      LAMBDA_FUNCTION_NAME: gateway-fastapi-lambdafunction2
+      HTTP_API_ID: ajazewyhdg
+      SSM_PARAMETER_PATH: /sst/passphrase/fastapi-lambdadocker/
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          for name in AWS_REGION ECR_REPOSITORY LAMBDA_FUNCTION_NAME; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Set the GitHub Actions variable ${name}."
+              exit 1
+            fi
+          done
+          if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
+            echo "::error::Set the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY GitHub Actions secrets."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prepare ECR repository
+        id: ecr
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! aws ecr describe-repositories \
+            --repository-names "$ECR_REPOSITORY" \
+            --region "$AWS_REGION" >/dev/null 2>&1; then
+            aws ecr create-repository \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-scanning-configuration scanOnPush=true \
+              --image-tag-mutability IMMUTABLE \
+              --region "$AWS_REGION"
+          fi
+          repository_uri="$(aws ecr describe-repositories \
+            --repository-names "$ECR_REPOSITORY" \
+            --region "$AWS_REGION" \
+            --query 'repositories[0].repositoryUri' \
+            --output text)"
+          echo "uri=$repository_uri" >> "$GITHUB_OUTPUT"
+
+      # - name: Determine Lambda image architecture
+      #   id: lambda
+      #   shell: bash
+      #   run: |
+      #     set -euo pipefail
+      #     configuration="$(aws lambda get-function-configuration \
+      #       --function-name "$LAMBDA_FUNCTION_NAME" \
+      #       --region "$AWS_REGION" \
+      #       --output json)"
+      #     package_type="$(jq -er '.PackageType' <<< "$configuration")"
+      #     if [[ "$package_type" != "Image" ]]; then
+      #       echo "::error::Lambda function ${LAMBDA_FUNCTION_NAME} must use the Image package type."
+      #       exit 1
+      #     fi
+      #     architecture="$(jq -er '.Architectures[0] // empty' <<< "$configuration")"
+      #     case "$architecture" in
+      #       x86_64) platform=linux/amd64 ;;
+      #       arm64) platform=linux/arm64 ;;
+      #       *)
+      #         echo "::error::Unsupported Lambda architecture: ${architecture}"
+      #         exit 1
+      #         ;;
+      #     esac
+      #     echo "platform=$platform" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Lambda image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ steps.lambda.outputs.platform }}
+          outputs: type=image,push=true,oci-mediatypes=false
+          compression: gzip
+          force-compression: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.ecr.outputs.uri }}:${{ github.sha }}
+
+      - name: Verify Lambda-compatible image manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_file="$RUNNER_TEMP/ecr-image-manifest.json"
+          manifest_media_type="application/vnd.docker.distribution.manifest.v2+json"
+          config_media_type="application/vnd.docker.container.image.v1+json"
+          layer_media_type="application/vnd.docker.image.rootfs.diff.tar.gzip"
+
+          aws ecr batch-get-image \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="${GITHUB_SHA}" \
+            --accepted-media-types "$manifest_media_type" \
+            --region "$AWS_REGION" \
+            --output json > "$manifest_file"
+
+          image_manifest_media_type="$(jq -r '.images[0].imageManifestMediaType // "missing"' "$manifest_file")"
+          if [[ "$image_manifest_media_type" != "$manifest_media_type" ]]; then
+            echo "::error::ECR image manifest media type is ${image_manifest_media_type}; expected ${manifest_media_type}."
+            exit 1
+          fi
+
+          if ! jq -e \
+            --arg manifest "$manifest_media_type" \
+            --arg config "$config_media_type" \
+            --arg layer "$layer_media_type" \
+            '
+              .images[0].imageManifest
+              | fromjson
+              | .schemaVersion == 2
+                and .mediaType == $manifest
+                and .config.mediaType == $config
+                and (.layers | type == "array" and length > 0)
+                and all(.layers[]; .mediaType == $layer)
+            ' "$manifest_file" >/dev/null; then
+            echo "::error::ECR image manifest, config, or layer media types are not supported by AWS Lambda. Expected Docker schema 2, Docker image config, and gzip-compressed Docker layers."
+            exit 1
+          fi
+
+      - name: Deploy image to Lambda
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws lambda update-function-code \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --image-uri "${{ steps.ecr.outputs.uri }}:${{ github.sha }}" \
+            --region "$AWS_REGION"
+          aws lambda wait function-updated-v2 \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION"
+          aws lambda update-function-configuration \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --image-config '{"Command":["fastapi_lambdadocker:app","--host","0.0.0.0","--port","8080"]}' \
+            --region "$AWS_REGION"
+          aws lambda wait function-updated-v2 \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION"
+
+      # - name: Configure HTTP API default route
+      #   shell: bash
+      #   run: |
+      #     set -euo pipefail
+      #     lambda_arn="$(aws lambda get-function-configuration \
+      #       --function-name "$LAMBDA_FUNCTION_NAME" \
+      #       --region "$AWS_REGION" \
+      #       --query FunctionArn \
+      #       --output text)"
+      #     integration_uri="$lambda_arn"
+      #     integrations_file="$RUNNER_TEMP/http-api-integrations.json"
+      #     routes_file="$RUNNER_TEMP/http-api-routes.json"
+      #     stages_file="$RUNNER_TEMP/http-api-stages.json"
+
+      #     aws apigatewayv2 get-integrations \
+      #       --api-id "$HTTP_API_ID" \
+      #       --region "$AWS_REGION" \
+      #       --output json > "$integrations_file"
+      #     integration_id="$(jq -r \
+      #       --arg uri "$integration_uri" \
+      #       '[.Items[]? | select(.IntegrationUri == $uri) | .IntegrationId][0] // empty' \
+      #       "$integrations_file")"
+      #     if [[ -z "$integration_id" ]]; then
+      #       integration_id="$(aws apigatewayv2 create-integration \
+      #         --api-id "$HTTP_API_ID" \
+      #         --integration-type AWS_PROXY \
+      #         --integration-uri "$integration_uri" \
+      #         --payload-format-version 2.0 \
+      #         --region "$AWS_REGION" \
+      #         --query IntegrationId \
+      #         --output text)"
+      #     fi
+
+      #     aws apigatewayv2 get-routes \
+      #       --api-id "$HTTP_API_ID" \
+      #       --region "$AWS_REGION" \
+      #       --output json > "$routes_file"
+      #     default_route_id="$(jq -r \
+      #       '[.Items[]? | select(.RouteKey == "$default") | .RouteId][0] // empty' \
+      #       "$routes_file")"
+      #     route_target="integrations/${integration_id}"
+      #     if [[ -z "$default_route_id" ]]; then
+      #       aws apigatewayv2 create-route \
+      #         --api-id "$HTTP_API_ID" \
+      #         --route-key '$default' \
+      #         --target "$route_target" \
+      #         --region "$AWS_REGION" >/dev/null
+      #     else
+      #       current_target="$(jq -r \
+      #         --arg route_id "$default_route_id" \
+      #         '.Items[]? | select(.RouteId == $route_id) | .Target' \
+      #         "$routes_file")"
+      #       if [[ "$current_target" != "$route_target" ]]; then
+      #         aws apigatewayv2 update-route \
+      #           --api-id "$HTTP_API_ID" \
+      #           --route-id "$default_route_id" \
+      #           --target "$route_target" \
+      #           --region "$AWS_REGION" >/dev/null
+      #       fi
+      #     fi
+
+      #     aws apigatewayv2 get-stages \
+      #       --api-id "$HTTP_API_ID" \
+      #       --region "$AWS_REGION" \
+      #       --output json > "$stages_file"
+      #     default_stage_autodeploy="$(jq -r \
+      #       '[.Items[]? | select(.StageName == "$default") | .AutoDeploy][0] // empty' \
+      #       "$stages_file")"
+      #     if [[ -z "$default_stage_autodeploy" ]]; then
+      #       aws apigatewayv2 create-stage \
+      #         --api-id "$HTTP_API_ID" \
+      #         --stage-name '$default' \
+      #         --auto-deploy \
+      #         --region "$AWS_REGION" >/dev/null
+      #     elif [[ "$default_stage_autodeploy" != "true" ]]; then
+      #       aws apigatewayv2 update-stage \
+      #         --api-id "$HTTP_API_ID" \
+      #         --stage-name '$default' \
+      #         --auto-deploy \
+      #         --region "$AWS_REGION" >/dev/null
+      #     fi
+
+      #     account_id="$(aws sts get-caller-identity \
+      #       --query Account \
+      #       --output text)"
+      #     statement_id="apigateway-${HTTP_API_ID}"
+      #     source_arn="arn:aws:execute-api:${AWS_REGION}:${account_id}:${HTTP_API_ID}/*/*/*"
+      #     default_statement_id="${statement_id}-default-route"
+      #     default_source_arn="arn:aws:execute-api:${AWS_REGION}:${account_id}:${HTTP_API_ID}/\$default/\$default"
+      #     policy_file="$RUNNER_TEMP/lambda-policy.json"
+      #     policy_error_file="$RUNNER_TEMP/lambda-policy-error.txt"
+      #     add_permission=true
+      #     add_default_permission=true
+      #     if aws lambda get-policy \
+      #       --function-name "$LAMBDA_FUNCTION_NAME" \
+      #       --region "$AWS_REGION" \
+      #       --output json > "$policy_file" 2> "$policy_error_file"; then
+      #       policy="$(jq -er '.Policy' "$policy_file")"
+      #       if jq -e \
+      #         --arg sid "$statement_id" \
+      #         '(.Statement | if type == "array" then . else [.] end) | any(.Sid == $sid)' \
+      #         <<< "$policy" >/dev/null; then
+      #         add_permission=false
+      #       fi
+      #       if jq -e \
+      #         --arg sid "$default_statement_id" \
+      #         --arg source_arn "$default_source_arn" \
+      #         '(.Statement | if type == "array" then . else [.] end) | any(.Sid == $sid and .Condition.ArnLike["AWS:SourceArn"] == $source_arn)' \
+      #         <<< "$policy" >/dev/null; then
+      #         add_default_permission=false
+      #       elif jq -e \
+      #         --arg sid "$default_statement_id" \
+      #         '(.Statement | if type == "array" then . else [.] end) | any(.Sid == $sid)' \
+      #         <<< "$policy" >/dev/null; then
+      #         echo "::error::Lambda permission ${default_statement_id} exists with an unexpected source ARN."
+      #         exit 1
+      #       fi
+      #     else
+      #       if ! grep -q 'ResourceNotFoundException' "$policy_error_file"; then
+      #         cat "$policy_error_file" >&2
+      #         exit 1
+      #       fi
+      #     fi
+      #     if [[ "$add_permission" == true ]]; then
+      #       aws lambda add-permission \
+      #         --function-name "$LAMBDA_FUNCTION_NAME" \
+      #         --statement-id "$statement_id" \
+      #         --action lambda:InvokeFunction \
+      #         --principal apigateway.amazonaws.com \
+      #         --source-arn "$source_arn" \
+      #         --region "$AWS_REGION" >/dev/null
+      #     fi
+      #     if [[ "$add_default_permission" == true ]]; then
+      #       aws lambda add-permission \
+      #         --function-name "$LAMBDA_FUNCTION_NAME" \
+      #         --statement-id "$default_statement_id" \
+      #         --action lambda:InvokeFunction \
+      #         --principal apigateway.amazonaws.com \
+      #         --source-arn "$default_source_arn" \
+      #         --region "$AWS_REGION" >/dev/null
+      #     fi
+
+      - name: Configure streaming Function URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          url_config_file="$RUNNER_TEMP/lambda-function-url-config.json"
+          url_config_error_file="$RUNNER_TEMP/lambda-function-url-config-error.txt"
+          if aws lambda get-function-url-config \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --output json > "$url_config_file" 2> "$url_config_error_file"; then
+            current_auth_type="$(jq -r '.AuthType' "$url_config_file")"
+            current_invoke_mode="$(jq -r '.InvokeMode' "$url_config_file")"
+            if [[ "$current_auth_type" != "NONE" || "$current_invoke_mode" != "RESPONSE_STREAM" ]]; then
+              aws lambda update-function-url-config \
+                --function-name "$LAMBDA_FUNCTION_NAME" \
+                --auth-type NONE \
+                --invoke-mode RESPONSE_STREAM \
+                --region "$AWS_REGION" >/dev/null
+            fi
+          else
+            if ! grep -Eq 'ResourceNotFoundException|FunctionUrlConfigNotFoundException' "$url_config_error_file"; then
+              cat "$url_config_error_file" >&2
+              exit 1
+            fi
+            aws lambda create-function-url-config \
+              --function-name "$LAMBDA_FUNCTION_NAME" \
+              --auth-type NONE \
+              --invoke-mode RESPONSE_STREAM \
+              --region "$AWS_REGION" >/dev/null
+          fi
+
+          policy_file="$RUNNER_TEMP/lambda-function-url-policy.json"
+          policy_error_file="$RUNNER_TEMP/lambda-function-url-policy-error.txt"
+          if ! aws lambda get-policy \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --output json > "$policy_file" 2> "$policy_error_file"; then
+            if ! grep -q 'ResourceNotFoundException' "$policy_error_file"; then
+              cat "$policy_error_file" >&2
+              exit 1
+            fi
+            printf '{"Statement":[]}\n' > "$policy_file"
+          fi
+          policy="$(jq -er '.Policy' "$policy_file")"
+
+          ensure_function_url_permission() {
+            local statement_id="$1"
+            local action="$2"
+            local condition_type="$3"
+            local condition_key="$4"
+            local condition_value="$5"
+            local existing_statement
+            existing_statement="$(jq -c \
+              --arg sid "$statement_id" \
+              '(.Statement | if type == "array" then . else [.] end) | map(select(.Sid == $sid)) | .[0] // empty' \
+              <<< "$policy")"
+            if [[ -n "$existing_statement" ]]; then
+              if ! jq -e \
+                --arg sid "$statement_id" \
+                --arg action "$action" \
+                --arg condition_type "$condition_type" \
+                --arg condition_key "$condition_key" \
+                --arg condition_value "$condition_value" \
+                '(.Statement | if type == "array" then . else [.] end) | any(.[]; .Sid == $sid and .Effect == "Allow" and .Action == $action and (.Principal == "*" or .Principal.AWS == "*") and (.Condition[$condition_type][$condition_key] | tostring) == $condition_value)' \
+                <<< "$policy" >/dev/null; then
+                echo "::error::Lambda permission ${statement_id} exists with unexpected action or conditions."
+                exit 1
+              fi
+              return
+            fi
+
+            local -a permission_args
+            permission_args=(
+              --function-name "$LAMBDA_FUNCTION_NAME"
+              --statement-id "$statement_id"
+              --action "$action"
+              --principal '*'
+              --region "$AWS_REGION"
+            )
+            if [[ "$condition_key" == "lambda:FunctionUrlAuthType" ]]; then
+              permission_args+=(--function-url-auth-type NONE)
+            else
+              permission_args+=(--invoked-via-function-url)
+            fi
+            aws lambda add-permission "${permission_args[@]}" >/dev/null
+          }
+
+          ensure_function_url_permission \
+            "function-url-public-invoke-url" \
+            "lambda:InvokeFunctionUrl" \
+            "StringEquals" \
+            "lambda:FunctionUrlAuthType" \
+            "NONE"
+          ensure_function_url_permission \
+            "function-url-public-invoke" \
+            "lambda:InvokeFunction" \
+            "Bool" \
+            "lambda:InvokedViaFunctionUrl" \
+            "true"
+
+          function_url="$(aws lambda get-function-url-config \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --query FunctionUrl \
+            --output text)"
+          echo "Function URL (streaming route): ${function_url}stream" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Load Parameter Store values into Lambda environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          parameter_file="$RUNNER_TEMP/ssm-parameters.json"
+          current_config_file="$RUNNER_TEMP/lambda-configuration.json"
+          current_variables_file="$RUNNER_TEMP/lambda-variables.json"
+          parameter_variables_file="$RUNNER_TEMP/parameter-variables.json"
+          environment_file="$RUNNER_TEMP/lambda-environment.json"
+          parameter_prefix="${SSM_PARAMETER_PATH%/}/"
+
+          aws ssm get-parameters-by-path \
+            --path "$SSM_PARAMETER_PATH" \
+            --recursive \
+            --with-decryption \
+            --region "$AWS_REGION" \
+            --output json > "$parameter_file"
+
+          parameter_count="$(jq -er '.Parameters | length' "$parameter_file")"
+          if [[ "$parameter_count" -eq 0 ]]; then
+            echo "::error::No SSM parameters found under ${SSM_PARAMETER_PATH}."
+            exit 1
+          fi
+
+          jq --arg prefix "$parameter_prefix" '
+            reduce .Parameters[] as $parameter ({};
+              ($parameter.Name | ltrimstr($prefix) | gsub("/"; "_")) as $key |
+              if ($key | test("^[A-Za-z][A-Za-z0-9_]+$")) then
+                if has($key) then
+                  error("Multiple SSM parameters map to the same Lambda environment variable")
+                else
+                  . + {($key): $parameter.Value}
+                end
+              else
+                error("An SSM parameter path does not map to a valid Lambda environment variable name")
+              end
+            )
+          ' "$parameter_file" > "$parameter_variables_file"
+
+          aws lambda get-function-configuration \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --output json > "$current_config_file"
+          jq '.Environment.Variables // {}' "$current_config_file" > "$current_variables_file"
+          jq -s '.[0] * .[1] * {"AWS_LWA_INVOKE_MODE":"response_stream"} | {Variables: .}' \
+            "$current_variables_file" \
+            "$parameter_variables_file" > "$environment_file"
+
+          aws lambda update-function-configuration \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --environment "file://$environment_file" \
+            --region "$AWS_REGION" >/dev/null
+          aws lambda wait function-updated-v2 \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --region "$AWS_REGION"
