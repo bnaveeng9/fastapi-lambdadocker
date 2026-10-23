@@ -33,16 +33,6 @@ def _save_credentials(credentials: Credentials) -> None:
 def _authorize_user() -> Credentials:
     load_dotenv(Path(__file__).with_name(".env"))
 
-    token_path = _token_path()
-    if token_path.exists():
-        creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
-        if creds.valid:
-            return creds
-        if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            _save_credentials(creds)
-            return creds
-
     client_id = os.environ.get("GOOGLE_CLIENT_ID")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
     refresh_token = os.environ.get("GOOGLE_REFRESH_TOKEN")
@@ -61,8 +51,17 @@ def _authorize_user() -> Credentials:
             scopes=SCOPES,
         )
         creds.refresh(Request())
-        _save_credentials(creds)
         return creds
+
+    token_path = _token_path()
+    if token_path.exists():
+        creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+        if creds.valid:
+            return creds
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            _save_credentials(creds)
+            return creds
 
     interactive_auth = os.environ.get(
         "GOOGLE_OAUTH_INTERACTIVE", "true"

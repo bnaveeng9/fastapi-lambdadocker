@@ -10,6 +10,14 @@ from fastapi_lambdadocker.gmailmessages import gmailmessagesjson
 mcp = FastMCP("gmailotp-mcpserver")
 
 
+@mcp.tool()
+def sudo_otp() -> str:
+    """
+    Returns a dummy OTP like string.
+    :return:  a dummy OTP like string.
+    """
+    return "651243"
+
 @mcp.tool
 def get_otp_messages() -> list[dict[str, str]]:
     """Return recent Gmail inbox messages."""

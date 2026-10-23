@@ -260,7 +260,7 @@ class GmailMessageTests(unittest.TestCase):
     @patch("fastapi_lambdadocker.gmailmessages.Credentials")
     @patch("fastapi_lambdadocker.gmailmessages.InstalledAppFlow.from_client_config")
     @patch("fastapi_lambdadocker.gmailmessages._token_path")
-    def test_refresh_token_environment_authorizes_without_browser(
+    def test_refresh_token_environment_authorizes_without_browser_or_token_file(
         self,
         get_token_path: MagicMock,
         create_flow: MagicMock,
@@ -284,7 +284,8 @@ class GmailMessageTests(unittest.TestCase):
             scopes=SCOPES,
         )
         credentials.refresh.assert_called_once_with(create_request.return_value)
-        save_credentials.assert_called_once_with(credentials)
+        get_token_path.assert_not_called()
+        save_credentials.assert_not_called()
         create_flow.assert_not_called()
 
     @patch.dict(
