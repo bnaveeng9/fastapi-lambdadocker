@@ -1,0 +1,8 @@
+{
+	"mcpServers": {
+		"my-mcp-server-721a0092": {
+			"url": "https://5d2jwyeimxzdxtptcjp4wxs37a0cfsyp.lambda-url.us-east-1.on.aws/mcp",
+			"type": "http"
+		}
+	}
+}
