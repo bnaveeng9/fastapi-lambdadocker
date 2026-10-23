@@ -11,4 +11,4 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REFRESH_TOKEN: ${GOOGLE_REFRESH_TOKEN:-}
       GOOGLE_OAUTH_INTERACTIVE: "false"
-      GOOGLE_TOKEN_FILE: /tmp/gmail-user-token.json
+      GOOGLE_TOKEN_FILE: /tmp/gmail-mcp/gmail-user-token.json
